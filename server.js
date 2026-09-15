@@ -42,6 +42,30 @@ app.get('/api/entities', (_req, res) => {
   res.json(ENTITIES);
 });
 
+// Only these codes carry a message already known to be free of filesystem
+// paths or other internal detail — everything else falls back to a generic
+// message below so nothing about the server's folder layout ever reaches
+// the browser. Full detail is still written to logs/transmissions.log.
+const CLIENT_SAFE_CODES = new Set([
+  'INVALID_INVOICE_FORMAT',
+  'INVALID_ENTITY',
+  'NO_MATCH',
+  'AMBIGUOUS_MATCH',
+  'DEST_ALREADY_EXISTS'
+]);
+
+const STATUS_BY_CODE = {
+  INVALID_INVOICE_FORMAT: 400,
+  INVALID_ENTITY: 400,
+  NO_MATCH: 404,
+  AMBIGUOUS_MATCH: 409,
+  SOURCE_DIR_NOT_FOUND: 404,
+  DEST_ALREADY_EXISTS: 409
+};
+
+const GENERIC_FAILURE_MESSAGE =
+  'Could not complete the retransmission request. Please try again or contact support.';
+
 app.post('/api/transmit', requireSameOrigin, async (req, res) => {
   const { invoiceNumber, entityId } = req.body || {};
 
@@ -57,21 +81,29 @@ app.post('/api/transmit', requireSameOrigin, async (req, res) => {
       entityName: result.entityName
     });
   } catch (err) {
-    const status = {
-      INVALID_INVOICE_FORMAT: 400,
-      INVALID_ENTITY: 400,
-      NO_MATCH: 404,
-      AMBIGUOUS_MATCH: 409,
-      SOURCE_DIR_NOT_FOUND: 404,
-      DEST_ALREADY_EXISTS: 409
-    }[err.code] || 500;
+    const status = STATUS_BY_CODE[err.code] || 500;
+    const message = CLIENT_SAFE_CODES.has(err.code) ? err.message : GENERIC_FAILURE_MESSAGE;
+
+    if (!CLIENT_SAFE_CODES.has(err.code)) {
+      console.error(`transmit failed [${err.code || 'UNKNOWN'}]:`, err.message);
+    }
 
     res.status(status).json({
-      error: err.message,
+      error: message,
       code: err.code || 'UNKNOWN',
       matches: err.matches
     });
   }
+});
+
+// Catches anything that reaches here unhandled — a malformed request body,
+// a thrown error from a route that forgot to catch it, etc. Without this,
+// Express's default handler renders a full stack trace (with real file
+// paths) as the HTTP response, which must never reach the browser.
+app.use((err, _req, res, _next) => {
+  console.error('Unhandled request error:', err);
+  if (res.headersSent) return;
+  res.status(400).json({ error: 'Invalid request.', code: 'BAD_REQUEST' });
 });
 
 app.listen(PORT, HOST, () => {

@@ -1,0 +1,111 @@
+# eTIMS Retransmission Tool
+
+Local tool to re-queue a processed KRA eTIMS sales invoice JSON file for
+retransmission, by moving it from the `processedArchive` folder into the
+`resend\trnsSales` folder for the selected entity.
+
+## Setup
+
+```
+npm install
+npm start
+```
+
+Then open http://localhost:4173
+
+## Configuration
+
+Copy [.env.example](.env.example) to `.env` and adjust values for this machine:
+
+```
+PORT=4173
+EBM_DATA_ROOT=C:\Users\EKaranja\AppData\EbmData
+SOURCE_SUBPATH=Data\processed\processedArchive
+DEST_SUBPATH=Data\resend\trnsSales
+SEARCH_MAX_DEPTH=6
+```
+
+| Variable            | Purpose                                                              | Default |
+|---------------------|-----------------------------------------------------------------------|---------|
+| `PORT`              | Port the local web UI listens on                                      | `4173`  |
+| `EBM_DATA_ROOT`     | Root folder containing the per-entity `P0000...P_00` directories      | `C:\Users\EKaranja\AppData\EbmData` |
+| `SOURCE_SUBPATH`    | Path (relative to `<EBM_DATA_ROOT>\<entity>`) searched for archives   | `Data\processed\processedArchive` |
+| `DEST_SUBPATH`      | Path (relative to `<EBM_DATA_ROOT>\<entity>`) files are moved into    | `Data\resend\trnsSales` |
+| `SEARCH_MAX_DEPTH`  | How many sub-folder levels deep to search under `SOURCE_SUBPATH`      | `6`     |
+| `HOST`              | Network interface the server binds to                                 | `127.0.0.1` |
+
+`.env` is git-ignored since it's machine-specific; `.env.example` is the
+template to copy. Settings can also be set as real environment variables
+instead of (or to override) `.env`.
+
+Entities are configured in [config.js](config.js):
+
+| Folder          | Display name  | Default |
+|-----------------|---------------|---------|
+| P000592722P_00  | Farmerschoice | Yes     |
+| P000613908P_00  | Flamingo      | No      |
+
+## How it works
+
+1. Enter the invoice number, e.g. `KRACU0300007620/478344`. The part after
+   the `/` (`478344`) is used to search `Data\processed\processedArchive`
+   (including sub-folders) for a matching `.json` file.
+2. If exactly one match is found, it is safely moved into
+   `Data\resend\trnsSales`:
+   - the file is copied to a temp file in the destination and flushed to disk,
+   - the copy is checksum-verified against the source,
+   - only then is it atomically renamed to its final name,
+   - only after that succeeds is the original file in `processedArchive`
+     deleted.
+
+   If any step fails before the final delete, nothing is removed from
+   `processedArchive` and any partial file in the destination is cleaned up
+   — no document is ever left missing from both locations.
+3. If zero or more than one file matches, nothing is moved and the app
+   reports the problem instead of guessing.
+
+Every attempt (success or failure) is appended to `logs/transmissions.log`
+for an audit trail.
+
+## Security
+
+This tool moves real tax-invoice files based on user input, so it's built
+so that only the two folders you configure can ever be touched, and only by
+requests actually made from this app running on this machine:
+
+- **No arbitrary paths from the client.** The browser only ever sends an
+  invoice number and an entity choice. The entity is checked against a
+  hardcoded whitelist ([config.js](config.js)) before it's used to build any
+  path — an unrecognised entity is rejected outright, never used to
+  construct a folder name. The invoice-number reference is validated to be
+  short, alphanumeric (plus `-`/`_`), and is only ever used as a
+  `.includes()` filter over files Node itself already listed from disk — it
+  is never concatenated into a path.
+- **Every resolved path is re-confirmed to stay inside `EBM_DATA_ROOT`**
+  ([config.js](config.js) `assertWithinRoot`), both at startup (a typo'd
+  `SOURCE_SUBPATH`/`DEST_SUBPATH` in `.env` fails immediately rather than
+  silently pointing elsewhere) and again for every file the search step
+  matches.
+- **Symbolic links inside the archive tree are skipped, not followed**
+  ([lib/search.js](lib/search.js)), so a link planted there can't be used to
+  pull in or overwrite a file from outside the configured folders.
+- **The move only ever writes inside the destination folder and only ever
+  deletes the one matched source file** — see the copy-verify-then-delete
+  sequence in [lib/safeMove.js](lib/safeMove.js). It also refuses to
+  overwrite an existing file at the destination.
+- **The server only listens on `127.0.0.1` by default** (`HOST` in `.env`),
+  so no other device on the network can reach it — only processes on this
+  machine can.
+- **Cross-origin requests to `/api/transmit` are rejected** ([server.js](server.js)
+  `requireSameOrigin`), so a malicious page open in another browser tab
+  can't silently trigger a file move by POSTing to it in the background
+  (CSRF). Only requests whose `Origin`/`Referer` matches this app's own
+  origin — or plain local tools like `curl` that send neither header — are
+  accepted.
+
+What this does **not** protect against: anyone who can already run code as
+your Windows user account, or who has filesystem access to
+`EBM_DATA_ROOT` directly, already has the same access this app has — there
+is no OS-level permission boundary here, only application-level input and
+path validation. If several people share this machine/account, treat that
+as the actual trust boundary.

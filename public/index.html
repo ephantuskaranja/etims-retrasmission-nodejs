@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>eTIMS Retransmission</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>eTIMS Retransmission</h1>
+    <p class="subtitle">Re-queue a processed invoice for transmission to KRA.</p>
+
+    <form id="transmit-form">
+      <label class="field">
+        <span>KRA entity</span>
+        <div id="entity-options" class="entity-options"></div>
+      </label>
+
+      <label class="field">
+        <span>KRA invoice number</span>
+        <input
+          id="invoice-number"
+          type="text"
+          placeholder="e.g. KRACU0300007620/478344"
+          autocomplete="off"
+          required
+        />
+      </label>
+
+      <button type="submit" id="submit-btn">Retransmit</button>
+    </form>
+
+    <div id="result" class="result" hidden></div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

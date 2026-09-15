@@ -1,0 +1,14 @@
+{
+  "name": "etims-transmission",
+  "version": "1.0.0",
+  "description": "Local tool to re-queue a KRA eTIMS sales invoice JSON for retransmission",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2"
+  }
+}

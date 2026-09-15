@@ -19,7 +19,7 @@ Copy [.env.example](.env.example) to `.env` and adjust values for this machine:
 
 ```
 PORT=4173
-EBM_DATA_ROOT=C:\Users\EKaranja\AppData\EbmData
+EBM_DATA_ROOT=C:\..put_full_path
 SOURCE_SUBPATH=Data\processed\processedArchive
 DEST_SUBPATH=Data\resend\trnsSales
 SEARCH_MAX_DEPTH=6
@@ -28,7 +28,7 @@ SEARCH_MAX_DEPTH=6
 | Variable            | Purpose                                                              | Default |
 |---------------------|-----------------------------------------------------------------------|---------|
 | `PORT`              | Port the local web UI listens on                                      | `4173`  |
-| `EBM_DATA_ROOT`     | Root folder containing the per-entity `P0000...P_00` directories      | `C:\Users\EKaranja\AppData\EbmData` |
+| `EBM_DATA_ROOT`     | Root folder containing the per-entity `P0000...P_00` directories      | `C:\...\AppData\EbmData` |
 | `SOURCE_SUBPATH`    | Path (relative to `<EBM_DATA_ROOT>\<entity>`) searched for archives   | `Data\processed\processedArchive` |
 | `DEST_SUBPATH`      | Path (relative to `<EBM_DATA_ROOT>\<entity>`) files are moved into    | `Data\resend\trnsSales` |
 | `SEARCH_MAX_DEPTH`  | How many sub-folder levels deep to search under `SOURCE_SUBPATH`      | `6`     |

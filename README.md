@@ -64,8 +64,48 @@ Entities are configured in [config.js](config.js):
 3. If zero or more than one file matches, nothing is moved and the app
    reports the problem instead of guessing.
 
-Every attempt (success or failure) is appended to `logs/transmissions.log`
-for an audit trail.
+## Logging
+
+Every request — successful transmissions, rejected input, and system
+errors — is recorded in `logs/<YYYY-MM-DD>.json`, one file per calendar
+day, as a JSON array of entries:
+
+```json
+[
+  {
+    "timestamp": "2026-09-15T14:33:21.731Z",
+    "level": "INFO",
+    "event": "TRANSMIT_SUCCESS",
+    "invoiceNumber": "KRACU0300007620/478344",
+    "entityId": "P000592722P_00",
+    "entityName": "Farmerschoice",
+    "fileName": "trnsSales_KRACU0300007620_478344.json"
+  },
+  {
+    "timestamp": "2026-09-15T14:33:21.727Z",
+    "level": "WARN",
+    "event": "TRANSMIT_FAILURE",
+    "invoiceNumber": "X/000000",
+    "entityId": "P000592722P_00",
+    "code": "NO_MATCH",
+    "message": "No archived file matching reference \"000000\" was found for Farmerschoice."
+  }
+]
+```
+
+- `level: "INFO"` — a successful transmission (`TRANSMIT_SUCCESS`).
+- `level: "WARN"` — the request was rejected because of what the user
+  entered (bad format, no match, ambiguous match, missing fields).
+- `level: "ERROR"` — something on the system side stopped the transmission
+  (e.g. the configured archive folder doesn't exist, a copy failed). These
+  entries include the full internal error detail (which may include a file
+  path) — this file is for the operator, it is never sent to the browser.
+
+Writes are serialized per day-file and written atomically (temp file +
+rename), so two requests landing at the same time can't corrupt the log or
+overwrite each other's entries; a log file found to be corrupt on read is
+quarantined (renamed with a `.corrupt-<timestamp>` suffix) rather than
+silently overwritten. `logs/` is git-ignored.
 
 ## Security
 

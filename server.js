@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const { ENTITIES, PORT, HOST } = require('./config');
 const { transmit } = require('./lib/transmit');
+const { logEvent } = require('./lib/eventLog');
 
 const app = express();
 
@@ -45,7 +46,7 @@ app.get('/api/entities', (_req, res) => {
 // Only these codes carry a message already known to be free of filesystem
 // paths or other internal detail — everything else falls back to a generic
 // message below so nothing about the server's folder layout ever reaches
-// the browser. Full detail is still written to logs/transmissions.log.
+// the browser. Full detail is still written to logs/<YYYY-MM-DD>.json.
 const CLIENT_SAFE_CODES = new Set([
   'INVALID_INVOICE_FORMAT',
   'INVALID_ENTITY',
@@ -70,6 +71,14 @@ app.post('/api/transmit', requireSameOrigin, async (req, res) => {
   const { invoiceNumber, entityId } = req.body || {};
 
   if (!invoiceNumber || !entityId) {
+    await logEvent({
+      level: 'WARN',
+      event: 'TRANSMIT_FAILURE',
+      code: 'MISSING_FIELDS',
+      invoiceNumber,
+      entityId,
+      message: 'invoiceNumber and entityId are required.'
+    });
     return res.status(400).json({ error: 'invoiceNumber and entityId are required.' });
   }
 
@@ -102,6 +111,12 @@ app.post('/api/transmit', requireSameOrigin, async (req, res) => {
 // paths) as the HTTP response, which must never reach the browser.
 app.use((err, _req, res, _next) => {
   console.error('Unhandled request error:', err);
+  logEvent({
+    level: 'ERROR',
+    event: 'SYSTEM_ERROR',
+    code: err.code || 'UNHANDLED_REQUEST_ERROR',
+    message: err.message
+  });
   if (res.headersSent) return;
   res.status(400).json({ error: 'Invalid request.', code: 'BAD_REQUEST' });
 });

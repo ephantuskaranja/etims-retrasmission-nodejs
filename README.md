@@ -33,6 +33,17 @@ SEARCH_MAX_DEPTH=6
 | `DEST_SUBPATH`      | Path (relative to `<EBM_DATA_ROOT>\<entity>`) files are moved into    | `Data\resend\trnsSales` |
 | `SEARCH_MAX_DEPTH`  | How many sub-folder levels deep to search under `SOURCE_SUBPATH`      | `6`     |
 | `HOST`              | Network interface the server binds to                                 | `127.0.0.1` |
+| `ALLOWED_ORIGINS`   | Extra origins (comma-separated) allowed to call the API, beyond `localhost`/`127.0.0.1` | *(empty)* |
+
+If `HOST` is changed to a LAN IP (or `0.0.0.0`) so the app can be reached
+from other machines — e.g. through a DNS name like
+`http://nav.farmerschoice.co.ke:8089` — you **must** also set
+`ALLOWED_ORIGINS` to that exact origin, or every request will fail with
+`"Cross-origin request rejected."` (see [Security](#security)):
+
+```
+ALLOWED_ORIGINS=http://nav.farmerschoice.co.ke:8089
+```
 
 `.env` is git-ignored since it's machine-specific; `.env.example` is the
 template to copy. Settings can also be set as real environment variables
@@ -135,13 +146,19 @@ requests actually made from this app running on this machine:
   overwrite an existing file at the destination.
 - **The server only listens on `127.0.0.1` by default** (`HOST` in `.env`),
   so no other device on the network can reach it — only processes on this
-  machine can.
+  machine can. If `HOST` is deliberately changed to a LAN IP so a remote
+  team can reach it (e.g. `http://nav.farmerschoice.co.ke:8089`), that
+  network exposure is now intentional and the origin check below becomes
+  the main thing standing between "this app" and "anything else on the
+  network" — keep `ALLOWED_ORIGINS` scoped to exactly the origin(s) people
+  actually use, never a wildcard.
 - **Cross-origin requests to `/api/transmit` are rejected** ([server.js](server.js)
   `requireSameOrigin`), so a malicious page open in another browser tab
   can't silently trigger a file move by POSTing to it in the background
   (CSRF). Only requests whose `Origin`/`Referer` matches this app's own
-  origin — or plain local tools like `curl` that send neither header — are
-  accepted.
+  origin (`localhost`/`127.0.0.1` plus whatever is listed in
+  `ALLOWED_ORIGINS`) — or plain local tools like `curl` that send neither
+  header — are accepted.
 
 What this does **not** protect against: anyone who can already run code as
 your Windows user account, or who has filesystem access to

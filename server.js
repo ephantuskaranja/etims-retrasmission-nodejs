@@ -1,12 +1,16 @@
 const express = require('express');
 const path = require('path');
-const { ENTITIES, PORT, HOST } = require('./config');
+const { ENTITIES, PORT, HOST, ALLOWED_ORIGINS: EXTRA_ORIGINS } = require('./config');
 const { transmit } = require('./lib/transmit');
 const { logEvent } = require('./lib/eventLog');
 
 const app = express();
 
-const ALLOWED_ORIGINS = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]);
+const ALLOWED_ORIGINS = new Set([
+  `http://localhost:${PORT}`,
+  `http://127.0.0.1:${PORT}`,
+  ...EXTRA_ORIGINS
+]);
 
 // Blocks CSRF-style requests: a page open in another tab/site cannot silently
 // trigger a file move here, because browsers stamp a real cross-origin

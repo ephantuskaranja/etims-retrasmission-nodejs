@@ -15,6 +15,16 @@ const PORT = Number(process.env.PORT) || 4173;
 const HOST = process.env.HOST || '127.0.0.1';
 const SEARCH_MAX_DEPTH = Number(process.env.SEARCH_MAX_DEPTH) || 6;
 
+// Extra full origins (scheme://host:port) allowed to call the API, beyond
+// http://localhost:PORT and http://127.0.0.1:PORT which are always allowed.
+// Needed whenever the app is reached through a hostname or a non-loopback
+// IP — e.g. a DNS name pointed at this server, or a reverse proxy.
+// Comma-separated, e.g. "http://nav.farmerschoice.co.ke:8089,http://172.16.10.5:8089".
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 const ENTITIES = [
   { id: 'P000592722P_00', name: 'Farmerschoice', default: true },
   { id: 'P000613908P_00', name: 'Flamingo', default: false }
@@ -65,6 +75,7 @@ module.exports = {
   DATA_ROOT: RESOLVED_DATA_ROOT,
   PORT,
   HOST,
+  ALLOWED_ORIGINS,
   SEARCH_MAX_DEPTH,
   ENTITIES,
   getEntity,

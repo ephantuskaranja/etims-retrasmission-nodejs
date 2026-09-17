@@ -109,7 +109,16 @@ which:
 - streams one result back as soon as it's ready (newline-delimited JSON)
   rather than making the browser wait for the whole batch, which is what
   lets the results table update live, row by row, exactly as if each one
-  were sent separately.
+  were sent separately;
+- re-checks disk directly whenever that index reports no match, rather than
+  trusting the snapshot as final. The index is a one-time snapshot taken
+  when the batch starts, but the archive folder can keep growing the whole
+  time a large batch runs if production is still actively processing new
+  invoices — without this re-check, an invoice whose file lands in the
+  archive folder *after* the snapshot was taken would incorrectly report
+  "not found" even though it's genuinely there moments later. The live
+  re-check only runs for actual misses, so it doesn't cost anything for the
+  (typically much larger) set of invoices the index already found.
 
 Each row is colour-highlighted green (success) or red (failed) with its
 filename or failure reason shown alongside. If any fail, a "Copy failed"

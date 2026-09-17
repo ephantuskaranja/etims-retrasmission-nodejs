@@ -15,14 +15,15 @@ const bulkSummaryEl = document.getElementById('bulk-summary');
 const bulkResultsBody = document.getElementById('bulk-results-body');
 const copyFailedBtn = document.getElementById('copy-failed-btn');
 
-const MAX_BULK_ITEMS = 500;
-
+let maxBulkItems = 1000; // overwritten by loadEntities() with the server's actual configured cap
 let selectedEntityId = null;
 let isProcessing = false;
 
 async function loadEntities() {
   const res = await fetch('/api/entities');
-  const entities = await res.json();
+  const data = await res.json();
+  const entities = data.entities || [];
+  if (data.maxBulkItems) maxBulkItems = data.maxBulkItems;
 
   entityOptionsEl.innerHTML = '';
   entities.forEach((entity) => {
@@ -156,10 +157,10 @@ bulkForm.addEventListener('submit', async (e) => {
   const invoiceNumbers = parseBulkInput(bulkInput.value);
   if (!selectedEntityId || invoiceNumbers.length === 0) return;
 
-  if (invoiceNumbers.length > MAX_BULK_ITEMS) {
+  if (invoiceNumbers.length > maxBulkItems) {
     bulkProgressEl.hidden = false;
     bulkProgressEl.className = 'bulk-progress error';
-    bulkProgressEl.textContent = `Too many invoice numbers (${invoiceNumbers.length}). Please process at most ${MAX_BULK_ITEMS} at a time.`;
+    bulkProgressEl.textContent = `Too many invoice numbers (${invoiceNumbers.length}). Please process at most ${maxBulkItems} at a time.`;
     return;
   }
 
@@ -170,6 +171,7 @@ bulkForm.addEventListener('submit', async (e) => {
 
   bulkProgressEl.hidden = false;
   bulkProgressEl.className = 'bulk-progress';
+  bulkProgressEl.textContent = `Starting — 0 / ${invoiceNumbers.length} processed.`;
   bulkResultsEl.hidden = false;
   bulkResultsBody.innerHTML = '';
 
@@ -182,39 +184,89 @@ bulkForm.addEventListener('submit', async (e) => {
   let succeeded = 0;
   let failed = 0;
   const failedInvoiceNumbers = [];
-
   updateSummary(0, 0, rows.length, 0);
 
-  // Processed strictly one at a time: the next invoice is only sent once the
-  // current one's response has come back, so two file moves can never
-  // overlap and race each other.
-  for (let i = 0; i < rows.length; i++) {
-    const { invoiceNumber, row, statusCell, detailCell } = rows[i];
+  const markFailed = (index, message) => {
+    const { invoiceNumber, row, statusCell, detailCell } = rows[index];
+    failed += 1;
+    failedInvoiceNumbers.push(invoiceNumber);
+    row.className = 'row-fail';
+    statusCell.textContent = 'Failed';
+    detailCell.textContent = message;
+  };
 
-    row.className = 'row-active';
-    statusCell.textContent = 'Processing…';
-    row.scrollIntoView({ block: 'nearest' });
-    bulkProgressEl.textContent = `Processing ${i + 1} of ${rows.length}: ${invoiceNumber}`;
+  // Server processes the whole batch strictly one invoice at a time — the
+  // next one's file move only starts once the current one has fully
+  // finished — and streams a line back per event as it happens, so the UI
+  // below updates live without waiting for the whole batch to complete.
+  try {
+    const res = await fetch('/api/transmit-bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiceNumbers, entityId: selectedEntityId })
+    });
 
-    const result = await callTransmit(invoiceNumber, selectedEntityId);
-
-    if (result.ok) {
-      succeeded += 1;
-      row.className = 'row-success';
-      statusCell.textContent = 'Success';
-      detailCell.textContent = result.fileName || 'Queued for transmission';
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      bulkProgressEl.className = 'bulk-progress error';
+      bulkProgressEl.textContent = data.error || 'Bulk request was rejected.';
     } else {
-      failed += 1;
-      failedInvoiceNumbers.push(invoiceNumber);
-      row.className = 'row-fail';
-      statusCell.textContent = 'Failed';
-      detailCell.textContent = result.displayMessage;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let done = false;
+
+      while (!done) {
+        const chunk = await reader.read();
+        done = chunk.done;
+        if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
+
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          if (!line.trim()) continue;
+
+          const event = JSON.parse(line);
+
+          if (event.type === 'start') {
+            const { row, statusCell } = rows[event.index];
+            row.className = 'row-active';
+            statusCell.textContent = 'Processing…';
+            row.scrollIntoView({ block: 'nearest' });
+            bulkProgressEl.textContent = `Processing ${event.index + 1} of ${rows.length}: ${event.invoiceNumber}`;
+          } else if (event.type === 'result') {
+            if (event.ok) {
+              succeeded += 1;
+              const { row, statusCell, detailCell } = rows[event.index];
+              row.className = 'row-success';
+              statusCell.textContent = 'Success';
+              detailCell.textContent = event.fileName || 'Queued for transmission';
+            } else {
+              let message = event.message || 'Failed';
+              if (event.matches) message += ' Matches: ' + event.matches.join(', ');
+              markFailed(event.index, message);
+            }
+            updateSummary(succeeded, failed, rows.length, event.index + 1);
+          } else if (event.type === 'fatal') {
+            bulkProgressEl.className = 'bulk-progress error';
+            bulkProgressEl.textContent = event.message || 'Bulk processing failed.';
+            // Whatever hadn't started yet never will — reflect that instead
+            // of leaving those rows stuck on "Pending".
+            rows.forEach((r, i) => {
+              if (r.row.className === 'row-pending') markFailed(i, event.message || 'Not processed.');
+            });
+            updateSummary(succeeded, failed, rows.length, succeeded + failed);
+          } else if (event.type === 'done') {
+            bulkProgressEl.textContent = `Done — ${succeeded} succeeded, ${failed} failed out of ${rows.length}.`;
+          }
+        }
+      }
     }
-
-    updateSummary(succeeded, failed, rows.length, i + 1);
+  } catch {
+    bulkProgressEl.className = 'bulk-progress error';
+    bulkProgressEl.textContent = 'Could not reach the retransmission service, or the connection dropped mid-batch. Check logs for what completed.';
   }
-
-  bulkProgressEl.textContent = `Done — ${succeeded} succeeded, ${failed} failed out of ${rows.length}.`;
 
   if (failedInvoiceNumbers.length > 0) {
     copyFailedBtn.hidden = false;

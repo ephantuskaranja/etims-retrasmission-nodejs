@@ -1,8 +1,10 @@
 const express = require('express');
 const path = require('path');
-const { ENTITIES, PORT, HOST, ALLOWED_ORIGINS: EXTRA_ORIGINS } = require('./config');
+const { ENTITIES, PORT, HOST, ALLOWED_ORIGINS: EXTRA_ORIGINS, MAX_BULK_ITEMS } = require('./config');
 const { transmit } = require('./lib/transmit');
+const { transmitBulk } = require('./lib/bulkTransmit');
 const { logEvent } = require('./lib/eventLog');
+const { CLIENT_SAFE_CODES, STATUS_BY_CODE, GENERIC_FAILURE_MESSAGE, clientSafeMessage } = require('./lib/errorCodes');
 
 const app = express();
 
@@ -40,36 +42,12 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/entities', (_req, res) => {
-  res.json(ENTITIES);
+  res.json({ entities: ENTITIES, maxBulkItems: MAX_BULK_ITEMS });
 });
-
-// Only these codes carry a message already known to be free of filesystem
-// paths or other internal detail — everything else falls back to a generic
-// message below so nothing about the server's folder layout ever reaches
-// the browser. Full detail is still written to logs/<YYYY-MM-DD>.json.
-const CLIENT_SAFE_CODES = new Set([
-  'INVALID_INVOICE_FORMAT',
-  'INVALID_ENTITY',
-  'NO_MATCH',
-  'AMBIGUOUS_MATCH',
-  'DEST_ALREADY_EXISTS'
-]);
-
-const STATUS_BY_CODE = {
-  INVALID_INVOICE_FORMAT: 400,
-  INVALID_ENTITY: 400,
-  NO_MATCH: 404,
-  AMBIGUOUS_MATCH: 409,
-  SOURCE_DIR_NOT_FOUND: 404,
-  DEST_ALREADY_EXISTS: 409
-};
-
-const GENERIC_FAILURE_MESSAGE =
-  'Could not complete the retransmission request. Please try again or contact support.';
 
 app.post('/api/transmit', requireSameOrigin, async (req, res) => {
   const { invoiceNumber, entityId } = req.body || {};
@@ -95,7 +73,7 @@ app.post('/api/transmit', requireSameOrigin, async (req, res) => {
     });
   } catch (err) {
     const status = STATUS_BY_CODE[err.code] || 500;
-    const message = CLIENT_SAFE_CODES.has(err.code) ? err.message : GENERIC_FAILURE_MESSAGE;
+    const message = clientSafeMessage(err);
 
     if (!CLIENT_SAFE_CODES.has(err.code)) {
       console.error(`transmit failed [${err.code || 'UNKNOWN'}]:`, err.message);
@@ -106,6 +84,71 @@ app.post('/api/transmit', requireSameOrigin, async (req, res) => {
       code: err.code || 'UNKNOWN',
       matches: err.matches
     });
+  }
+});
+
+// Processes a whole batch of invoice numbers against one entity, strictly
+// one at a time (see lib/bulkTransmit.js), streaming one newline-delimited
+// JSON object back per event as it happens instead of waiting for the
+// whole batch to finish. This is what lets a run of thousands of invoices:
+//  - keep the HTTP connection actively sending data (rather than sitting
+//    idle for tens of minutes, which risks a proxy or browser timeout),
+//  - update the UI live, one row at a time, exactly as before.
+app.post('/api/transmit-bulk', requireSameOrigin, async (req, res) => {
+  const { invoiceNumbers, entityId } = req.body || {};
+
+  if (!Array.isArray(invoiceNumbers) || invoiceNumbers.length === 0 || !entityId) {
+    return res.status(400).json({ error: 'invoiceNumbers (a non-empty array) and entityId are required.' });
+  }
+  if (!invoiceNumbers.every((n) => typeof n === 'string')) {
+    return res.status(400).json({ error: 'invoiceNumbers must be an array of strings.' });
+  }
+  if (invoiceNumbers.length > MAX_BULK_ITEMS) {
+    return res.status(400).json({
+      error: `Too many invoice numbers (${invoiceNumbers.length}). Please process at most ${MAX_BULK_ITEMS} at a time.`,
+      code: 'TOO_MANY_ITEMS'
+    });
+  }
+
+  res.status(200);
+  res.set('Content-Type', 'application/x-ndjson');
+  res.set('Cache-Control', 'no-cache');
+  res.set('X-Accel-Buffering', 'no'); // disable buffering on nginx-style proxies, if any sit in front
+  if (res.flushHeaders) res.flushHeaders();
+
+  // If the browser tab closes or navigates away mid-batch, keep processing
+  // and logging server-side (the file moves and audit trail matter more
+  // than whether anyone is still watching) — just stop trying to write to
+  // the dead connection.
+  let clientGone = false;
+  res.on('close', () => { clientGone = true; });
+
+  const writeLine = (obj) => {
+    if (clientGone) return;
+    try {
+      res.write(JSON.stringify(obj) + '\n');
+    } catch {
+      clientGone = true;
+    }
+  };
+
+  try {
+    await transmitBulk({ invoiceNumbers, entityId }, async (event) => {
+      writeLine(event);
+    });
+    writeLine({ type: 'done' });
+  } catch (err) {
+    // Only entity/archive-folder-level failures reach here (per-invoice
+    // failures are already captured as individual "result" lines) — these
+    // fail the whole batch before any invoice was attempted.
+    console.error(`transmit-bulk failed [${err.code || 'UNKNOWN'}]:`, err.message);
+    writeLine({
+      type: 'fatal',
+      code: err.code || 'UNKNOWN',
+      message: CLIENT_SAFE_CODES.has(err.code) ? err.message : GENERIC_FAILURE_MESSAGE
+    });
+  } finally {
+    if (!clientGone) res.end();
   }
 });
 

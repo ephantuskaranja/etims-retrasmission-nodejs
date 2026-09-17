@@ -14,6 +14,10 @@ const PORT = Number(process.env.PORT) || 4173;
 // devices on the network. Only change this deliberately (e.g. "0.0.0.0").
 const HOST = process.env.HOST || '127.0.0.1';
 const SEARCH_MAX_DEPTH = Number(process.env.SEARCH_MAX_DEPTH) || 6;
+// Ceiling on how many invoice numbers one bulk request can carry. Rejected
+// outright (nothing processed) rather than silently truncated if exceeded.
+// Raise via MAX_BULK_ITEMS in .env once larger batches have been tested.
+const MAX_BULK_ITEMS = Number(process.env.MAX_BULK_ITEMS) || 1000;
 
 // Extra full origins (scheme://host:port) allowed to call the API, beyond
 // http://localhost:PORT and http://127.0.0.1:PORT which are always allowed.
@@ -77,6 +81,7 @@ module.exports = {
   HOST,
   ALLOWED_ORIGINS,
   SEARCH_MAX_DEPTH,
+  MAX_BULK_ITEMS,
   ENTITIES,
   getEntity,
   getPaths,

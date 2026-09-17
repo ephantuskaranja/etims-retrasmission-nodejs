@@ -39,6 +39,7 @@ SEARCH_MAX_DEPTH=6
 | `SEARCH_MAX_DEPTH`  | How many sub-folder levels deep to search under `SOURCE_SUBPATH`      | `6`     |
 | `HOST`              | Network interface the server binds to                                 | `127.0.0.1` |
 | `ALLOWED_ORIGINS`   | Extra origins (comma-separated) allowed to call the API, beyond `localhost`/`127.0.0.1` | *(empty)* |
+| `MAX_BULK_ITEMS`    | Maximum invoice numbers allowed in one Bulk-mode batch                | `1000`  |
 
 If `HOST` is changed to a LAN IP (or `0.0.0.0`) so the app can be reached
 from other machines — e.g. through a DNS name like
@@ -83,8 +84,9 @@ Entities are configured in [config.js](config.js):
 ### Bulk mode
 
 Switch to the **Bulk** tab to process a list of invoice numbers instead of
-one. Paste them one per line — a column copied straight out of Excel pastes
-in as one-per-line automatically, so no file upload is needed:
+one. Paste them one per line, or separated by `|` (or a mix of both) — a
+column copied straight out of Excel pastes in as one-per-line
+automatically, so no file upload is needed:
 
 ```
 KRACU0300007620/401074
@@ -92,14 +94,38 @@ KRACU0300007620/401076
 KRACU0300007620/401087
 ```
 
-Each invoice number is sent to the server and its response is received
-back **before the next one is sent** ([public/app.js](public/app.js)) — the
-batch runs strictly one at a time, never in parallel, so two file moves can
-never overlap. Every row in the results table updates live as its result
-comes back and is colour-highlighted green (success) or red (failed), with
-its filename or failure reason shown alongside. If any fail, a "Copy
-failed" button copies just their invoice numbers back to the clipboard for
-a retry. Capped at 500 invoice numbers per batch.
+The whole batch is sent to the server in a single request
+(`POST /api/transmit-bulk`, [lib/bulkTransmit.js](lib/bulkTransmit.js)),
+which:
+
+- builds the archive folder's file index **once**, instead of re-walking
+  the whole folder from disk for every invoice number — the difference
+  that matters once both the batch and the archive are in the thousands;
+- processes invoice numbers strictly **one at a time** — the next one's
+  file move only starts once the current one has fully finished (moved,
+  logged) — so two moves can never overlap, and a duplicate invoice number
+  pasted twice correctly succeeds once and reports "no match" the second
+  time (the file is already gone from the index by then);
+- streams one result back as soon as it's ready (newline-delimited JSON)
+  rather than making the browser wait for the whole batch, which is what
+  lets the results table update live, row by row, exactly as if each one
+  were sent separately.
+
+Each row is colour-highlighted green (success) or red (failed) with its
+filename or failure reason shown alongside. If any fail, a "Copy failed"
+button copies just their invoice numbers back to the clipboard for a retry.
+
+Capped at `MAX_BULK_ITEMS` (default **1,000**) invoice numbers per batch —
+a paste over that limit is rejected outright (nothing processed) with a
+message stating the limit, both as an immediate client-side check and,
+authoritatively, server-side. Raise it via `.env` once a larger batch size
+has been proven out on your actual archive size; a 1,000-invoice batch
+against a ~2,000-file archive completed in around 6 seconds in testing.
+
+If the browser tab is closed or the connection drops mid-batch, the server
+keeps processing and logging the remaining invoice numbers rather than
+abandoning them — the file moves and audit trail matter more than whether
+anyone is still watching. Check `logs/<YYYY-MM-DD>.json` for what completed.
 
 ## Logging
 
@@ -138,11 +164,15 @@ day, as a JSON array of entries:
   entries include the full internal error detail (which may include a file
   path) — this file is for the operator, it is never sent to the browser.
 
-Writes are serialized per day-file and written atomically (temp file +
-rename), so two requests landing at the same time can't corrupt the log or
-overwrite each other's entries; a log file found to be corrupt on read is
+Writes are serialized per day-file and appended in place
+([lib/eventLog.js](lib/eventLog.js)) — each new entry is written without
+reading or rewriting the entries already in the file, so logging speed
+doesn't degrade as a day-file grows into the thousands of entries (a large
+bulk batch, for instance). A file whose shape doesn't match what's expected
+self-heals via one full rewrite; one that's genuinely unparseable is
 quarantined (renamed with a `.corrupt-<timestamp>` suffix) rather than
-silently overwritten. `logs/` is git-ignored.
+silently overwritten, so nothing already logged that day is ever lost.
+`logs/` is git-ignored.
 
 ## Security
 
@@ -178,13 +208,13 @@ requests actually made from this app running on this machine:
   the main thing standing between "this app" and "anything else on the
   network" — keep `ALLOWED_ORIGINS` scoped to exactly the origin(s) people
   actually use, never a wildcard.
-- **Cross-origin requests to `/api/transmit` are rejected** ([server.js](server.js)
-  `requireSameOrigin`), so a malicious page open in another browser tab
-  can't silently trigger a file move by POSTing to it in the background
-  (CSRF). Only requests whose `Origin`/`Referer` matches this app's own
-  origin (`localhost`/`127.0.0.1` plus whatever is listed in
-  `ALLOWED_ORIGINS`) — or plain local tools like `curl` that send neither
-  header — are accepted.
+- **Cross-origin requests to `/api/transmit` and `/api/transmit-bulk` are
+  rejected** ([server.js](server.js) `requireSameOrigin`), so a malicious
+  page open in another browser tab can't silently trigger a file move (or a
+  whole batch of them) by POSTing to it in the background (CSRF). Only
+  requests whose `Origin`/`Referer` matches this app's own origin
+  (`localhost`/`127.0.0.1` plus whatever is listed in `ALLOWED_ORIGINS`) —
+  or plain local tools like `curl` that send neither header — are accepted.
 
 What this does **not** protect against: anyone who can already run code as
 your Windows user account, or who has filesystem access to

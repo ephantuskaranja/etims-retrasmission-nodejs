@@ -13,6 +13,11 @@ npm start
 
 Then open http://localhost:4173
 
+During development, `npm run dev` runs the same server via Node's built-in
+`--watch`, restarting automatically whenever a file changes. `node
+server.js` also works directly — all three (`npm start`, `npm run dev`,
+`node server.js`) start the same app.
+
 ## Configuration
 
 Copy [.env.example](.env.example) to `.env` and adjust values for this machine:

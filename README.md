@@ -75,6 +75,27 @@ Entities are configured in [config.js](config.js):
 3. If zero or more than one file matches, nothing is moved and the app
    reports the problem instead of guessing.
 
+### Bulk mode
+
+Switch to the **Bulk** tab to process a list of invoice numbers instead of
+one. Paste them one per line — a column copied straight out of Excel pastes
+in as one-per-line automatically, so no file upload is needed:
+
+```
+KRACU0300007620/401074
+KRACU0300007620/401076
+KRACU0300007620/401087
+```
+
+Each invoice number is sent to the server and its response is received
+back **before the next one is sent** ([public/app.js](public/app.js)) — the
+batch runs strictly one at a time, never in parallel, so two file moves can
+never overlap. Every row in the results table updates live as its result
+comes back and is colour-highlighted green (success) or red (failed), with
+its filename or failure reason shown alongside. If any fail, a "Copy
+failed" button copies just their invoice numbers back to the clipboard for
+a retry. Capped at 500 invoice numbers per batch.
+
 ## Logging
 
 Every request — successful transmissions, rejected input, and system

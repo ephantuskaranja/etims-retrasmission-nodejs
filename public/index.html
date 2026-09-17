@@ -9,14 +9,19 @@
 <body>
   <main class="card">
     <h1>eTIMS Retransmission</h1>
-    <p class="subtitle">Re-queue a processed invoice for transmission to KRA.</p>
+    <p class="subtitle">Re-queue processed invoice(s) for transmission to KRA.</p>
 
-    <form id="transmit-form">
-      <label class="field">
-        <span>KRA entity</span>
-        <div id="entity-options" class="entity-options"></div>
-      </label>
+    <div class="tabs" id="mode-tabs">
+      <button type="button" class="tab selected" data-mode="single">Single</button>
+      <button type="button" class="tab" data-mode="bulk">Bulk</button>
+    </div>
 
+    <label class="field">
+      <span>KRA entity</span>
+      <div id="entity-options" class="entity-options"></div>
+    </label>
+
+    <form id="single-form" class="mode-panel">
       <label class="field">
         <span>KRA invoice number</span>
         <input
@@ -29,9 +34,43 @@
       </label>
 
       <button type="submit" id="submit-btn">Retransmit</button>
+
+      <div id="result" class="result" hidden></div>
     </form>
 
-    <div id="result" class="result" hidden></div>
+    <form id="bulk-form" class="mode-panel" hidden>
+      <label class="field">
+        <span>Invoice numbers — one per line, or separated by "|" (paste a column straight from Excel, or a "|"-delimited list)</span>
+        <textarea
+          id="bulk-input"
+          rows="8"
+          placeholder="KRACU0300007620/401074|KRACU0300007620/401076|KRACU0300007620/401087"
+        ></textarea>
+      </label>
+
+      <button type="submit" id="bulk-submit-btn">Process bulk</button>
+
+      <div id="bulk-progress" class="bulk-progress" hidden></div>
+
+      <div id="bulk-results" class="bulk-results" hidden>
+        <div class="bulk-results-header">
+          <span id="bulk-summary"></span>
+          <button type="button" id="copy-failed-btn" hidden>Copy failed</button>
+        </div>
+        <div class="bulk-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Invoice number</th>
+                <th>Status</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody id="bulk-results-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </form>
   </main>
 
   <script src="app.js"></script>

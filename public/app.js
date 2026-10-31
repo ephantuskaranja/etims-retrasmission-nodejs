@@ -157,13 +157,6 @@ bulkForm.addEventListener('submit', async (e) => {
   const invoiceNumbers = parseBulkInput(bulkInput.value);
   if (!selectedEntityId || invoiceNumbers.length === 0) return;
 
-  if (invoiceNumbers.length > maxBulkItems) {
-    bulkProgressEl.hidden = false;
-    bulkProgressEl.className = 'bulk-progress error';
-    bulkProgressEl.textContent = `Too many invoice numbers (${invoiceNumbers.length}). Please process at most ${maxBulkItems} at a time.`;
-    return;
-  }
-
   isProcessing = true;
   bulkSubmitBtn.disabled = true;
   bulkInput.disabled = true;
@@ -195,77 +188,117 @@ bulkForm.addEventListener('submit', async (e) => {
     detailCell.textContent = message;
   };
 
-  // Server processes the whole batch strictly one invoice at a time — the
-  // next one's file move only starts once the current one has fully
-  // finished — and streams a line back per event as it happens, so the UI
-  // below updates live without waiting for the whole batch to complete.
-  try {
+  // Whatever hadn't started yet never will — reflect that instead of
+  // leaving those rows stuck on "Pending".
+  const failRemaining = (message) => {
+    rows.forEach((r, i) => {
+      if (r.row.className === 'row-pending') markFailed(i, message);
+    });
+    updateSummary(succeeded, failed, rows.length, succeeded + failed);
+  };
+
+  // A paste larger than the server's per-request cap is split into chunks
+  // of maxBulkItems and sent one chunk after another, so the user pastes
+  // once but the server never sees more than its cap in one request. Each
+  // chunk only starts after the previous one has fully finished, so moves
+  // stay strictly one at a time across the whole paste. Returns false if
+  // the run should stop (rejected request, fatal error, dropped connection).
+  const runChunk = async (chunk, offset, chunkLabel) => {
     const res = await fetch('/api/transmit-bulk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ invoiceNumbers, entityId: selectedEntityId })
+      body: JSON.stringify({ invoiceNumbers: chunk, entityId: selectedEntityId })
     });
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
+      const message = data.error || 'Bulk request was rejected.';
       bulkProgressEl.className = 'bulk-progress error';
-      bulkProgressEl.textContent = data.error || 'Bulk request was rejected.';
-    } else {
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let done = false;
+      bulkProgressEl.textContent = message;
+      failRemaining(message);
+      return false;
+    }
 
-      while (!done) {
-        const chunk = await reader.read();
-        done = chunk.done;
-        if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
+    // Server processes the chunk strictly one invoice at a time and streams
+    // a line back per event as it happens, so the UI updates live. Event
+    // indices are relative to the chunk, hence the offset.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let done = false;
+    let finished = false;
 
-        let newlineIndex;
-        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-          const line = buffer.slice(0, newlineIndex);
-          buffer = buffer.slice(newlineIndex + 1);
-          if (!line.trim()) continue;
+    while (!done) {
+      const chunkRead = await reader.read();
+      done = chunkRead.done;
+      if (chunkRead.value) buffer += decoder.decode(chunkRead.value, { stream: true });
 
-          const event = JSON.parse(line);
+      let newlineIndex;
+      while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+        if (!line.trim()) continue;
 
-          if (event.type === 'start') {
-            const { row, statusCell } = rows[event.index];
-            row.className = 'row-active';
-            statusCell.textContent = 'Processing…';
-            row.scrollIntoView({ block: 'nearest' });
-            bulkProgressEl.textContent = `Processing ${event.index + 1} of ${rows.length}: ${event.invoiceNumber}`;
-          } else if (event.type === 'result') {
-            if (event.ok) {
-              succeeded += 1;
-              const { row, statusCell, detailCell } = rows[event.index];
-              row.className = 'row-success';
-              statusCell.textContent = 'Success';
-              detailCell.textContent = event.fileName || 'Queued for transmission';
-            } else {
-              let message = event.message || 'Failed';
-              if (event.matches) message += ' Matches: ' + event.matches.join(', ');
-              markFailed(event.index, message);
-            }
-            updateSummary(succeeded, failed, rows.length, event.index + 1);
-          } else if (event.type === 'fatal') {
-            bulkProgressEl.className = 'bulk-progress error';
-            bulkProgressEl.textContent = event.message || 'Bulk processing failed.';
-            // Whatever hadn't started yet never will — reflect that instead
-            // of leaving those rows stuck on "Pending".
-            rows.forEach((r, i) => {
-              if (r.row.className === 'row-pending') markFailed(i, event.message || 'Not processed.');
-            });
-            updateSummary(succeeded, failed, rows.length, succeeded + failed);
-          } else if (event.type === 'done') {
-            bulkProgressEl.textContent = `Done — ${succeeded} succeeded, ${failed} failed out of ${rows.length}.`;
+        const event = JSON.parse(line);
+        const index = offset + (event.index || 0);
+
+        if (event.type === 'start') {
+          const { row, statusCell } = rows[index];
+          row.className = 'row-active';
+          statusCell.textContent = 'Processing…';
+          row.scrollIntoView({ block: 'nearest' });
+          bulkProgressEl.textContent = `${chunkLabel}Processing ${index + 1} of ${rows.length}: ${event.invoiceNumber}`;
+        } else if (event.type === 'result') {
+          if (event.ok) {
+            succeeded += 1;
+            const { row, statusCell, detailCell } = rows[index];
+            row.className = 'row-success';
+            statusCell.textContent = 'Success';
+            detailCell.textContent = event.fileName || 'Queued for transmission';
+          } else {
+            let message = event.message || 'Failed';
+            if (event.matches) message += ' Matches: ' + event.matches.join(', ');
+            markFailed(index, message);
           }
+          updateSummary(succeeded, failed, rows.length, index + 1);
+        } else if (event.type === 'fatal') {
+          bulkProgressEl.className = 'bulk-progress error';
+          bulkProgressEl.textContent = event.message || 'Bulk processing failed.';
+          failRemaining(event.message || 'Not processed.');
+          return false;
+        } else if (event.type === 'done') {
+          finished = true;
         }
       }
+    }
+
+    // Stream ended without a "done" line — the connection dropped mid-chunk.
+    if (!finished) throw new Error('Stream ended early');
+    return true;
+  };
+
+  const chunkCount = Math.ceil(rows.length / maxBulkItems);
+  let completed = true;
+  try {
+    for (let c = 0; c < chunkCount; c++) {
+      const offset = c * maxBulkItems;
+      const chunk = invoiceNumbers.slice(offset, offset + maxBulkItems);
+      const chunkLabel = chunkCount > 1 ? `Batch ${c + 1} of ${chunkCount} — ` : '';
+      if (!(await runChunk(chunk, offset, chunkLabel))) {
+        completed = false;
+        break;
+      }
+    }
+    if (completed) {
+      bulkProgressEl.textContent = `Done — ${succeeded} succeeded, ${failed} failed out of ${rows.length}.`;
     }
   } catch {
     bulkProgressEl.className = 'bulk-progress error';
     bulkProgressEl.textContent = 'Could not reach the retransmission service, or the connection dropped mid-batch. Check logs for what completed.';
+    // The server keeps working through the chunk it was on even after the
+    // client goes away, so these may or may not have been moved — retrying
+    // one that was is harmless (it just reports no match).
+    failRemaining('Unconfirmed — connection dropped. Check logs, or retry.');
   }
 
   if (failedInvoiceNumbers.length > 0) {

@@ -39,7 +39,7 @@ SEARCH_MAX_DEPTH=6
 | `SEARCH_MAX_DEPTH`  | How many sub-folder levels deep to search under `SOURCE_SUBPATH`      | `6`     |
 | `HOST`              | Network interface the server binds to                                 | `127.0.0.1` |
 | `ALLOWED_ORIGINS`   | Extra origins (comma-separated) allowed to call the API, beyond `localhost`/`127.0.0.1` | *(empty)* |
-| `MAX_BULK_ITEMS`    | Maximum invoice numbers allowed in one Bulk-mode batch                | `1000`  |
+| `MAX_BULK_ITEMS`    | Maximum invoice numbers sent to the server per bulk request (larger pastes are split into chunks of this size) | `1000`  |
 
 If `HOST` is changed to a LAN IP (or `0.0.0.0`) so the app can be reached
 from other machines — e.g. through a DNS name like
@@ -124,12 +124,16 @@ Each row is colour-highlighted green (success) or red (failed) with its
 filename or failure reason shown alongside. If any fail, a "Copy failed"
 button copies just their invoice numbers back to the clipboard for a retry.
 
-Capped at `MAX_BULK_ITEMS` (default **1,000**) invoice numbers per batch —
-a paste over that limit is rejected outright (nothing processed) with a
-message stating the limit, both as an immediate client-side check and,
-authoritatively, server-side. Raise it via `.env` once a larger batch size
-has been proven out on your actual archive size; a 1,000-invoice batch
-against a ~2,000-file archive completed in around 6 seconds in testing.
+There's no limit on how many invoice numbers can be pasted at once. The
+browser splits a large paste into chunks of `MAX_BULK_ITEMS` (default
+**1,000**) and sends them one after another — the next chunk only starts
+once the previous one has fully finished, so moves stay strictly one at a
+time across the whole paste, and the progress line shows which chunk is
+running. The server still enforces `MAX_BULK_ITEMS` per request, rejecting
+any single request over it outright (nothing processed). Each chunk takes a
+fresh snapshot of the archive folder, so files that land mid-run are picked
+up by later chunks. A 1,000-invoice batch against a ~2,000-file archive
+completed in around 6 seconds in testing.
 
 If the browser tab is closed or the connection drops mid-batch, the server
 keeps processing and logging the remaining invoice numbers rather than

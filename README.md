@@ -122,7 +122,11 @@ which:
 
 Each row is colour-highlighted green (success) or red (failed) with its
 filename or failure reason shown alongside. If any fail, a "Copy failed"
-button copies just their invoice numbers back to the clipboard for a retry.
+button copies just their invoice numbers back to the clipboard for a retry,
+including on HTTP where the Clipboard API is unavailable. If the browser blocks
+automatic copying, the numbers are selected in a text box for manual copying.
+Invoices interrupted by a dropped connection are included as unconfirmed
+failures; check the logs or retry them.
 
 There's no limit on how many invoice numbers can be pasted at once. The
 browser splits a large paste into chunks of `MAX_BULK_ITEMS` (default

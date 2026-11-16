@@ -14,6 +14,8 @@ const bulkResultsEl = document.getElementById('bulk-results');
 const bulkSummaryEl = document.getElementById('bulk-summary');
 const bulkResultsBody = document.getElementById('bulk-results-body');
 const copyFailedBtn = document.getElementById('copy-failed-btn');
+const copyFailedManual = document.getElementById('copy-failed-manual');
+const copyFailedText = document.getElementById('copy-failed-text');
 
 let maxBulkItems = 1000; // overwritten by loadEntities() with the server's actual configured cap
 let selectedEntityId = null;
@@ -151,6 +153,35 @@ function updateSummary(succeeded, failed, total, done) {
   bulkSummaryEl.textContent = `${done} / ${total} processed — ${succeeded} succeeded, ${failed} failed`;
 }
 
+async function copyFailedInvoices(invoiceNumbers) {
+  const text = invoiceNumbers.join('\n');
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copyFailedManual.hidden = true;
+      return true;
+    } catch (err) {
+      console.warn('Clipboard API copy failed; trying the browser fallback.', err);
+    }
+  }
+
+  copyFailedText.value = text;
+  copyFailedManual.hidden = false;
+  copyFailedText.focus();
+  copyFailedText.select();
+  try {
+    if (document.execCommand('copy')) {
+      copyFailedManual.hidden = true;
+      copyFailedBtn.focus();
+      return true;
+    }
+  } catch (err) {
+    console.warn('Browser copy fallback failed.', err);
+  }
+  return false;
+}
+
 bulkForm.addEventListener('submit', async (e) => {
   e.preventDefault();
 
@@ -161,6 +192,8 @@ bulkForm.addEventListener('submit', async (e) => {
   bulkSubmitBtn.disabled = true;
   bulkInput.disabled = true;
   copyFailedBtn.hidden = true;
+  copyFailedBtn.textContent = 'Copy failed';
+  copyFailedManual.hidden = true;
 
   bulkProgressEl.hidden = false;
   bulkProgressEl.className = 'bulk-progress';
@@ -188,11 +221,10 @@ bulkForm.addEventListener('submit', async (e) => {
     detailCell.textContent = message;
   };
 
-  // Whatever hadn't started yet never will — reflect that instead of
-  // leaving those rows stuck on "Pending".
+  // Mark both pending and interrupted rows as unconfirmed failures.
   const failRemaining = (message) => {
     rows.forEach((r, i) => {
-      if (r.row.className === 'row-pending') markFailed(i, message);
+      if (r.row.className === 'row-pending' || r.row.className === 'row-active') markFailed(i, message);
     });
     updateSummary(succeeded, failed, rows.length, succeeded + failed);
   };
@@ -304,12 +336,11 @@ bulkForm.addEventListener('submit', async (e) => {
   if (failedInvoiceNumbers.length > 0) {
     copyFailedBtn.hidden = false;
     copyFailedBtn.onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(failedInvoiceNumbers.join('\n'));
+      if (await copyFailedInvoices(failedInvoiceNumbers)) {
         copyFailedBtn.textContent = 'Copied!';
         setTimeout(() => { copyFailedBtn.textContent = 'Copy failed'; }, 1500);
-      } catch {
-        // Clipboard access can be denied by the browser; nothing to do but leave the button as-is.
+      } else {
+        copyFailedBtn.textContent = 'Copy failed';
       }
     };
   }

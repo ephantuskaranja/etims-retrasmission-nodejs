@@ -5,6 +5,8 @@ const { transmit } = require('./lib/transmit');
 const { transmitBulk } = require('./lib/bulkTransmit');
 const { logEvent } = require('./lib/eventLog');
 const { CLIENT_SAFE_CODES, STATUS_BY_CODE, GENERIC_FAILURE_MESSAGE, clientSafeMessage } = require('./lib/errorCodes');
+const { startDailyAutoScheduler, triggerDailyAutoPush, getSchedulerStatus } = require('./lib/scheduler');
+const { readTodayLog, readDateLog, getDaySummary, getAvailableDates, getRecentLogs } = require('./lib/dailyLogs');
 
 const app = express();
 
@@ -152,6 +154,155 @@ app.post('/api/transmit-bulk', requireSameOrigin, async (req, res) => {
   }
 });
 
+// Daily Auto Push endpoints
+app.post('/api/daily-auto-push', requireSameOrigin, async (req, res) => {
+  const { entityId } = req.body || {};
+
+  try {
+    const result = await triggerDailyAutoPush(entityId);
+    res.json({
+      message: entityId 
+        ? `Daily auto push triggered for ${ENTITIES.find(e => e.id === entityId)?.name || entityId}`
+        : 'Daily auto push triggered for all entities',
+      result
+    });
+  } catch (err) {
+    const status = STATUS_BY_CODE[err.code] || 500;
+    const message = clientSafeMessage(err);
+
+    if (!CLIENT_SAFE_CODES.has(err.code)) {
+      console.error(`daily-auto-push failed [${err.code || 'UNKNOWN'}]:`, err.message);
+    }
+
+    res.status(status).json({
+      error: message,
+      code: err.code || 'UNKNOWN'
+    });
+  }
+});
+
+// Get scheduler status
+app.get('/api/scheduler-status', async (_req, res) => {
+  try {
+    const status = getSchedulerStatus();
+    res.json(status);
+  } catch (err) {
+    console.error('Failed to get scheduler status:', err);
+    res.status(500).json({
+      error: 'Failed to get scheduler status',
+      code: 'SCHEDULER_STATUS_ERROR'
+    });
+  }
+});
+
+// Get logs for today
+app.get('/api/daily-logs/today', async (_req, res) => {
+  try {
+    const logs = await readTodayLog();
+    res.json({ date: 'today', logs, count: logs.length });
+  } catch (err) {
+    console.error('Failed to read today logs:', err);
+    res.status(500).json({
+      error: 'Failed to read daily logs',
+      code: 'LOG_READ_ERROR'
+    });
+  }
+});
+
+// Get logs for a specific date (YYYYMMDD format)
+app.get('/api/daily-logs/:date', async (req, res) => {
+  const { date } = req.params;
+
+  try {
+    const logs = await readDateLog(date);
+    
+    if (!logs) {
+      return res.status(404).json({
+        error: `No logs found for date ${date}`,
+        code: 'LOG_NOT_FOUND',
+        date
+      });
+    }
+
+    res.json({ date, logs, count: logs.length });
+  } catch (err) {
+    if (err.message.includes('Invalid date format')) {
+      return res.status(400).json({
+        error: err.message,
+        code: 'INVALID_DATE_FORMAT'
+      });
+    }
+
+    console.error('Failed to read daily logs:', err);
+    res.status(500).json({
+      error: 'Failed to read daily logs',
+      code: 'LOG_READ_ERROR'
+    });
+  }
+});
+
+// Get summary for a specific date
+app.get('/api/daily-logs-summary/:date', async (req, res) => {
+  const { date } = req.params;
+
+  try {
+    const summary = await getDaySummary(date);
+    
+    if (!summary) {
+      return res.status(404).json({
+        error: `No logs found for date ${date}`,
+        code: 'LOG_NOT_FOUND',
+        date
+      });
+    }
+
+    res.json(summary);
+  } catch (err) {
+    if (err.message.includes('Invalid date format')) {
+      return res.status(400).json({
+        error: err.message,
+        code: 'INVALID_DATE_FORMAT'
+      });
+    }
+
+    console.error('Failed to read daily logs summary:', err);
+    res.status(500).json({
+      error: 'Failed to read daily logs summary',
+      code: 'LOG_READ_ERROR'
+    });
+  }
+});
+
+// Get available dates with logs
+app.get('/api/daily-logs-dates', async (_req, res) => {
+  try {
+    const dates = await getAvailableDates();
+    res.json({ availableDates: dates, count: dates.length });
+  } catch (err) {
+    console.error('Failed to get available log dates:', err);
+    res.status(500).json({
+      error: 'Failed to get available log dates',
+      code: 'LOG_READ_ERROR'
+    });
+  }
+});
+
+// Get recent logs (last N days, default 7)
+app.get('/api/daily-logs-recent', async (req, res) => {
+  const { days = 7 } = req.query;
+
+  try {
+    const logs = await getRecentLogs(parseInt(days));
+    res.json({ days: parseInt(days), logs });
+  } catch (err) {
+    console.error('Failed to get recent daily logs:', err);
+    res.status(500).json({
+      error: 'Failed to get recent daily logs',
+      code: 'LOG_READ_ERROR'
+    });
+  }
+});
+
 // Catches anything that reaches here unhandled — a malformed request body,
 // a thrown error from a route that forgot to catch it, etc. Without this,
 // Express's default handler renders a full stack trace (with real file
@@ -168,6 +319,12 @@ app.use((err, _req, res, _next) => {
   res.status(400).json({ error: 'Invalid request.', code: 'BAD_REQUEST' });
 });
 
-app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, async () => {
   console.log(`eTIMS retransmission tool running at http://${HOST}:${PORT}`);
+  
+  try {
+    await startDailyAutoScheduler();
+  } catch (err) {
+    console.error('Failed to start daily auto push scheduler:', err);
+  }
 });

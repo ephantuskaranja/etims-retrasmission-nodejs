@@ -14,6 +14,8 @@
     <div class="tabs" id="mode-tabs">
       <button type="button" class="tab selected" data-mode="single">Single</button>
       <button type="button" class="tab" data-mode="bulk">Bulk</button>
+      <button type="button" class="tab" data-mode="daily-auto">Daily Auto Push</button>
+      <button type="button" class="tab" data-mode="logs">View Logs</button>
     </div>
 
     <label class="field">
@@ -70,6 +72,50 @@
           </table>
         </div>
       </div>
+    </form>
+
+    <form id="daily-auto-form" class="mode-panel" hidden>
+      <div class="field">
+        <span>Daily Auto Push Bulk Upload</span>
+        <p style="color: #666; font-size: 0.9em; margin: 10px 0;">
+          Automatically re-transmits all files from the previous day at 6 AM Nairobi time every day.
+          You can also manually trigger it here.
+        </p>
+      </div>
+
+      <label class="field">
+        <span>Select Entity</span>
+        <div id="daily-entity-options" class="entity-options"></div>
+      </label>
+
+      <button type="submit" id="daily-auto-submit-btn">Trigger Daily Auto Push Now</button>
+
+      <div id="daily-auto-result" class="result" hidden></div>
+
+      <div id="scheduler-status" style="margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 4px; display: none;">
+        <h3>Scheduler Status</h3>
+        <div id="scheduler-status-content"></div>
+      </div>
+    </form>
+
+    <form id="logs-form" class="mode-panel" hidden>
+      <div class="field">
+        <span>Daily Auto Push Logs</span>
+        <p style="color: #666; font-size: 0.9em; margin: 10px 0;">
+          View logs of previous days' automatic push runs.
+        </p>
+      </div>
+
+      <label class="field">
+        <span>Select Date</span>
+        <select id="log-date-select" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+          <option value="">Loading available dates...</option>
+        </select>
+      </label>
+
+      <button type="button" id="view-log-btn">View Log</button>
+
+      <div id="log-result" class="result" hidden></div>
     </form>
   </main>
 

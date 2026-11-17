@@ -353,14 +353,25 @@ select {
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 14px;
-  background: transparent;
+  background: var(--card-bg);
   color: var(--text);
   cursor: pointer;
+}
+
+select option {
+  background: var(--card-bg);
+  color: var(--text);
 }
 
 select:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.logs-description {
+  color: var(--muted);
+  font-size: 0.9em;
+  margin: 10px 0;
 }
 
 .result pre {

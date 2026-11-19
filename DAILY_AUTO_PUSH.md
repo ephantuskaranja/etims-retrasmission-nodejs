@@ -27,9 +27,23 @@ C:\Users\EKaranja\AppData\EbmData\<EntityID>\Data\processed\processedArchive\
 
 ### File Processing
 1. All JSON files from yesterday's date folder are identified
-2. Files are moved to the destination folder (`Data\resend\trnsSales`) for re-transmission
-3. Each file movement is logged
-4. Success/failure statistics are tracked per run
+2. Files already re-sent by an earlier run are **skipped** (see *One retry per invoice* below)
+3. The rest are moved to the destination folder (`Data\resend\trnsSales`) for re-transmission
+4. Each file movement is logged
+5. Success/failed/skipped statistics are tracked per run
+
+### One retry per invoice (resend ledger)
+When the EBM service re-transmits a file, it re-archives it into *that day's* `processedArchive` folder — the folder the next morning's run reads. Without a guard every invoice would be re-sent every day, and the daily batch would grow without limit.
+
+To prevent this, each run records the files it re-sent in a per-entity ledger:
+
+```
+<EBM_DATA_ROOT>\logs\daily-auto-push\ledger\<EntityID>.json
+```
+
+Files in the ledger are skipped (left in place in the archive) and reported as `skipped` with reason `ALREADY_RESENT`. Entries are pruned after `RESEND_LEDGER_RETENTION_DAYS` (default 30). On first use the ledger is seeded from the existing daily run logs, so files re-sent before the ledger existed are not pushed again.
+
+The ledger only affects the automatic daily job — manual and bulk resends from the UI are unchanged. Only one daily run per entity can be in progress at a time; a second trigger returns HTTP 409 (`DAILY_PUSH_IN_PROGRESS`).
 
 ## Using the Feature
 

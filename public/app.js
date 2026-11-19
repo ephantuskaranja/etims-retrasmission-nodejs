@@ -444,7 +444,8 @@ dailyAutoForm.addEventListener('submit', async (e) => {
       let message = `✓ Daily auto push completed!\n`;
       message += `Files processed: ${result.totalFiles}\n`;
       message += `Successful: ${result.summary.success}\n`;
-      message += `Failed: ${result.summary.failed}`;
+      message += `Failed: ${result.summary.failed}\n`;
+      message += `Skipped (already re-sent): ${result.summary.skipped || 0}`;
       
       if (result.message) {
         message = `${result.message}\n${message}`;
